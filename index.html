@@ -310,7 +310,7 @@ self.onmessage = async (e) => {
   }
 
   let libText = null;
-  const libPromise = fetch("pylib.json?v=21ac6d3cf6").then((r) => {
+  const libPromise = fetch("pylib.json?v=6ece0f4f13").then((r) => {
     if (!r.ok) throw new Error("Could not load the tool files (" + r.status + ").");
     return r.text();
   }).then((t) => (libText = t));

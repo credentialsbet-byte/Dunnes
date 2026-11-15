@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BOM Auto-Fill</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  /* Layout: one working column. Files in, progress, then results with a wide scrollable preview. */
+  --ink: #18212f;
+  --muted: #5a6577;
+  --paper: #f4f6f9;
+  --surface: #ffffff;
+  --line: #d6dce5;
+  --accent: #2b4c8c;
+  --accent-ink: #ffffff;
+  --ok: #1d7a46;
+  --ok-bg: #e3f3e9;
+  --bad: #a3271f;
+  --bad-bg: #fbe5e3;
+  --warn-bg: #fff4d6;
+  --cell-ink: #1b1b1b;
+  --font-display: "IBM Plex Sans Condensed", "Arial Narrow", Arial, sans-serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", Consolas, "Courier New", monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ink: #e4e9f1; --muted: #9aa6b8; --paper: #11161f; --surface: #1a212d; --line: #2e3949;
+    --accent: #7f9fe0; --accent-ink: #0d1424; --ok: #6fd39b; --ok-bg: #173325; --bad: #ff9c92; --bad-bg: #3a1c1a;
+    --warn-bg: #3a3218; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --ink: #e4e9f1; --muted: #9aa6b8; --paper: #11161f; --surface: #1a212d; --line: #2e3949;
+  --accent: #7f9fe0; --accent-ink: #0d1424; --ok: #6fd39b; --ok-bg: #173325; --bad: #ff9c92; --bad-bg: #3a1c1a;
+  --warn-bg: #3a3218; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--paper); color: var(--ink); font: 15px/1.5 var(--font-body); }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 28px 20px 60px; display: grid; gap: 22px; }
+header { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px 24px; }
+h1 { font: 600 30px/1.1 var(--font-display); margin: 0; letter-spacing: .01em; text-wrap: balance; }
+h2 { font: 600 19px/1.2 var(--font-display); margin: 0; text-wrap: balance; }
+.lede { margin: 6px 0 0; color: var(--muted); max-width: 62ch; }
+.pill { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--surface); font-size: 13px; color: var(--muted); white-space: nowrap; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+.pill.busy .dot { background: #d29a1a; animation: pulse 1.2s ease-in-out infinite; }
+.pill.ok .dot { background: var(--ok); }
+.pill.bad .dot { background: var(--bad); }
+.pill.bad { color: var(--bad); }
+@keyframes pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .pill.busy .dot, .bar.indet span { animation: none; } }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 20px; display: grid; gap: 16px; }
+.files { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+@media (max-width: 760px) { .files { grid-template-columns: 1fr; } }
+.drop { position: relative; display: grid; gap: 6px; align-content: start; padding: 14px; min-height: 132px;
+  border: 1.5px dashed var(--line); border-radius: 8px; cursor: pointer; transition: border-color .15s, background .15s; }
+.drop:hover, .drop.over { border-color: var(--accent); }
+.drop:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.drop.has { border-style: solid; border-color: var(--ok); background: var(--ok-bg); }
+.drop.err { border-style: solid; border-color: var(--bad); background: var(--bad-bg); }
+.drop input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
+.drop .num { font: 600 13px var(--font-mono); color: var(--accent); }
+.drop .what { font-weight: 600; }
+.drop .hint { font-size: 13px; color: var(--muted); }
+.drop .name { font: 13px/1.35 var(--font-mono); word-break: break-all; }
+.drop .name.empty { font-family: var(--font-body); color: var(--muted); }
+.drop.err .name { color: var(--bad); font-family: var(--font-body); }
+
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+button { font: 600 14px var(--font-body); border-radius: 7px; padding: 10px 18px; cursor: pointer; border: 1px solid var(--accent);
+  background: var(--surface); color: var(--accent); }
+button.primary { background: var(--accent); color: var(--accent-ink); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.note { font-size: 13px; color: var(--muted); }
+
+.progress { display: grid; gap: 8px; }
+.bar { height: 8px; border-radius: 99px; background: var(--paper); border: 1px solid var(--line); overflow: hidden; }
+.bar span { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+.bar.indet span { width: 30%; animation: slide 1.3s ease-in-out infinite; }
+@keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+.step { font-variant-numeric: tabular-nums; }
+
+.msg { border-radius: 8px; padding: 12px 14px; }
+.msg.bad { background: var(--bad-bg); color: var(--bad); }
+.msg.warn { background: var(--warn-bg); }
+.msg p { margin: 0 0 8px; } .msg p:last-child { margin: 0; }
+details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+pre { font: 12.5px/1.5 var(--font-mono); white-space: pre-wrap; margin: 8px 0 0; color: var(--ink); }
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.tile { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: grid; gap: 2px; }
+.tile b { font: 600 22px/1.1 var(--font-display); font-variant-numeric: tabular-nums; }
+.tile span { font-size: 13px; color: var(--muted); }
+.tile.ok { border-color: var(--ok); background: var(--ok-bg); }
+.tile.ok b { color: var(--ok); }
+.tile.bad { border-color: var(--bad); background: var(--bad-bg); }
+.tile.bad b { color: var(--bad); }
+
+.legend { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 13px; color: var(--muted); }
+.legend i { display: inline-block; width: 14px; height: 14px; border-radius: 3px; vertical-align: -2px; margin-right: 6px; border: 1px solid rgba(0,0,0,.12); }
+.grid-wrap { overflow: auto; max-height: 70vh; border: 1px solid var(--line); border-radius: 8px; }
+table { border-collapse: collapse; font-size: 12.5px; }
+th, td { border: 1px solid var(--line); padding: 4px 7px; vertical-align: top; text-align: left; white-space: nowrap; }
+td.long { white-space: normal; min-width: 260px; max-width: 360px; }
+th { position: sticky; top: 0; z-index: 1; background: var(--surface); font-weight: 600; white-space: nowrap; }
+th small { display: block; font: 500 11px var(--font-mono); color: var(--accent); }
+td { font-variant-numeric: tabular-nums; }
+td.c { color: var(--cell-ink); }
+td.note { cursor: help; text-decoration: underline dotted; text-underline-offset: 3px; }
+td.helper { color: var(--muted); }
+.hidden { display: none !important; }
+footer { font-size: 13px; color: var(--muted); display: grid; gap: 6px; max-width: 70ch; }
+footer p { margin: 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>BOM Auto-Fill</h1>
+      <p class="lede">Fills the Dunnes BOM "New" tab (columns A to T) from the PO document and the CBD costing sheet. Your files stay on your computer: nothing is uploaded.</p>
+    </div>
+    <span id="engine" class="pill busy" role="status"><span class="dot"></span><span id="engine-text">Starting the engine (first time takes up to a minute)</span></span>
+  </header>
+
+  <section class="panel" aria-labelledby="files-h">
+    <h2 id="files-h">Add the three files</h2>
+    <div class="files">
+      <label class="drop" id="drop-bom">
+        <input type="file" id="f-bom" accept=".xlsx,.xlsm">
+        <span class="num">1 / BOM</span>
+        <span class="what">BOM Excel</span>
+        <span class="hint">.xlsx with the "New" tab</span>
+        <span class="name empty" id="n-bom">Click or drop the file here</span>
+      </label>
+      <label class="drop" id="drop-pdf">
+        <input type="file" id="f-pdf" accept=".pdf">
+        <span class="num">2 / PO</span>
+        <span class="what">PO document</span>
+        <span class="hint">PDF with all the POs of the file no.</span>
+        <span class="name empty" id="n-pdf">Click or drop the file here</span>
+      </label>
+      <label class="drop" id="drop-cbd">
+        <input type="file" id="f-cbd" accept=".xls,.xlsx">
+        <span class="num">3 / CBD</span>
+        <span class="what">CBD costing sheet</span>
+        <span class="hint">CBD Analysis .xls or .xlsx</span>
+        <span class="name empty" id="n-cbd">Click or drop the file here</span>
+      </label>
+    </div>
+    <div class="actions">
+      <button class="primary" id="run" disabled>Fill the BOM</button>
+      <span class="note" id="run-note">Add all three files to start.</span>
+    </div>
+    <div class="progress hidden" id="progress">
+      <div class="bar" id="bar"><span></span></div>
+      <div class="step" id="step"></div>
+    </div>
+  </section>
+
+  <section class="panel hidden" id="problem" aria-live="polite"></section>
+
+  <section class="panel hidden" id="result" aria-labelledby="result-h">
+    <div class="actions" style="justify-content: space-between">
+      <h2 id="result-h">Filled BOM</h2>
+      <div class="actions">
+        <button class="primary" id="dl">Download Excel file</button>
+        <button id="copy">Copy rows A:T</button>
+      </div>
+    </div>
+    <div class="note" id="dl-note"></div>
+    <div class="tiles" id="tiles"></div>
+    <div id="warns"></div>
+    <div class="legend">
+      <span><i style="background:#C6EFCE"></i>Filled from PO</span>
+      <span><i style="background:#FCE4D6"></i>From CBD or inferred, confirm</span>
+      <span><i style="background:#BDD7EE"></i>Placeholder replaced</span>
+      <span><i style="background:#FFC7CE"></i>Please check, not changed</span>
+      <span><i style="background:#FFEB9C"></i>No PO found for this row</span>
+      <span><i style="background:#E4DFEC"></i>(columns U to X) New row: split from a BOM row, or a PO item not in the BOM</span>
+    </div>
+    <div class="grid-wrap"><table id="grid"></table></div>
+    <details><summary>Run details</summary><pre id="log"></pre></details>
+  </section>
+
+  <footer>
+    <p>How it works: the PO lines and the CBD costs are matched to each BOM row by item type, colour and size. A value is filled only when exactly one PO item matches. Anything unclear is marked for checking and left unchanged.</p>
+    <p>The Excel file has five sheets: New (Filled), Change Log, PO Lines, CBD Data and Checks. If the Checks sheet says FAIL, do not trust the run.</p>
+    <p>The first visit on a computer loads the engine (about 14 MB, then the browser keeps it). A 30 page PO takes about one minute.</p>
+    <p>Built with Pyodide, pdfplumber, pdfminer.six, openpyxl, xlrd and charset-normalizer (open-source; their licences ship with the tool files, Pyodide is MPL-2.0).</p>
+  </footer>
+</div>
+
+<script type="text/plain" id="worker-src">
+let py = null, web = null;
+const short = (x) => {
+  const s = String((x && x.message) || x);
+  const lines = s.trim().split("\n").filter(Boolean);
+  return lines.slice(-3).join("\n");
+};
+self.onmessage = async (e) => {
+  const m = e.data;
+  const reply = (o, tr) => self.postMessage(Object.assign({ id: m.id, ok: true }, o), tr || []);
+  try {
+    if (m.type === "boot") {
+      let err = null;
+      for (const base of m.cdn) {
+        try {
+          const mod = await import(base + "pyodide.mjs");
+          py = await mod.loadPyodide({ indexURL: base, stdout: () => {}, stderr: () => {} });
+          break;
+        } catch (x) { err = x; py = null; }
+      }
+      if (!py) throw new Error("Could not load the Python engine. " + short(err));
+      const lib = JSON.parse(m.lib);
+      for (const rel in lib) {
+        const p = "/pylib/" + rel;
+        py.FS.mkdirTree(p.slice(0, p.lastIndexOf("/")));
+        py.FS.writeFile(p, lib[rel]);
+      }
+      py.runPython("import sys; sys.path.insert(0, '/pylib'); import bom_web, bom_tool");
+      web = py.pyimport("bom_web");
+      py.FS.mkdirTree("/in");
+      reply({ version: py.version });
+    } else if (m.type === "file") {
+      py.FS.writeFile("/in/" + m.name, new Uint8Array(m.data));
+      reply({});
+    } else if (m.type === "open") {
+      reply({ pages: web.open_pdf("/in/pdf") });
+    } else if (m.type === "page") {
+      reply({ pno: m.pno, data: web.extract_one(m.pno) });
+    } else if (m.type === "run") {
+      const res = web.go("/in/bom", "/in/cbd", "/in/pdf", !!m.force, m.pages);
+      let bytes = null;
+      if (JSON.parse(res).status === "ok") {
+        const p = web.output_bytes();
+        bytes = p.toJs();
+        p.destroy();
+      }
+      reply({ res, bytes }, bytes ? [bytes.buffer] : []);
+    }
+  } catch (x) {
+    self.postMessage({ id: m.id, ok: false, error: short(x) });
+  }
+};
+</script>
+
+<script>
+(() => {
+  const CDN = [
+    new URL("pyodide/", location.href).href,
+    "https://cdn.jsdelivr.net/pyodide/v314.0.8/full/",
+    "https://cdn.jsdelivr.net/pyodide/v314.0.0/full/",
+    "https://cdn.jsdelivr.net/pyodide/v0.29.4/full/",
+    "https://cdn.jsdelivr.net/pyodide/v0.29.1/full/"
+  ];
+  const $ = (id) => document.getElementById(id);
+  const cores = navigator.hardwareConcurrency || 2;
+  let K = Math.min(4, Math.max(1, cores - 1));
+  if (navigator.deviceMemory && navigator.deviceMemory <= 4) K = Math.min(K, 2);
+
+  const workerURL = URL.createObjectURL(new Blob([$("worker-src").textContent], { type: "text/javascript" }));
+  const files = { bom: null, pdf: null, cbd: null };
+  const RULES = {
+    bom: { re: /\.(xlsx|xlsm)$/i, msg: "This box needs the BOM Excel file (.xlsx)." },
+    pdf: { re: /\.pdf$/i, msg: "This box needs the PO document (.pdf)." },
+    cbd: { re: /\.(xls|xlsx)$/i, msg: "This box needs the CBD sheet (.xls or .xlsx)." }
+  };
+  let pageCache = { key: null, pages: null };
+  let output = null;     // { bytes, name, rows }
+  let busy = false;
+
+  // ------------------------------------------------------------ workers
+  class PyWorker {
+    constructor(i) {
+      this.i = i; this.seq = 0; this.wait = new Map(); this.dead = false; this.pdfKey = null;
+      this.w = new Worker(workerURL, { type: "module" });
+      this.w.onmessage = (e) => {
+        const m = e.data, p = this.wait.get(m.id);
+        if (!p) return;
+        this.wait.delete(m.id);
+        m.ok ? p.res(m) : p.rej(new Error(m.error));
+      };
+      this.w.onerror = (e) => this.kill(new Error(e.message || "The engine stopped (it may have run out of memory)."));
+    }
+    kill(err) {
+      this.dead = true;
+      for (const p of this.wait.values()) p.rej(err);
+      this.wait.clear();
+      try { this.w.terminate(); } catch (_) {}
+    }
+    call(type, data = {}, transfer = []) {
+      if (this.dead) return Promise.reject(new Error("The engine stopped."));
+      const id = ++this.seq;
+      return new Promise((res, rej) => {
+        this.wait.set(id, { res, rej });
+        this.w.postMessage(Object.assign({ id, type }, data), transfer);
+      });
+    }
+  }
+
+  let libText = null;
+  const libPromise = fetch("pylib.json").then((r) => {
+    if (!r.ok) throw new Error("Could not load the tool files (" + r.status + ").");
+    return r.text();
+  }).then((t) => (libText = t));
+
+  const pool = [];
+  function boot(i) {
+    const w = new PyWorker(i);
+    w.ready = libPromise.then(() => w.call("boot", { lib: libText, cdn: CDN })).then(() => w);
+    w.ready.catch((err) => w.kill(err));
+    pool.push(w);
+    return w.ready;
+  }
+
+  function setEngine(state, text) {
+    $("engine").className = "pill " + state;
+    $("engine-text").textContent = text;
+  }
+
+  boot(0).then(() => {
+    setEngine("ok", "Engine ready");
+    for (let i = 1; i < K; i++) boot(i).catch(() => {});
+    updateRun();
+  }).catch((err) => {
+    setEngine("bad", "Engine failed to start");
+    showProblem("The engine could not start in this browser.", err.message +
+      " Try reloading the page. If it still fails, open the link in Chrome or Edge on a computer.");
+  });
+
+  // ------------------------------------------------------------ file boxes
+  function setFile(kind, file) {
+    const box = $("drop-" + kind), name = $("n-" + kind);
+    box.classList.remove("has", "err");
+    name.classList.remove("empty");
+    if (!file) { files[kind] = null; name.textContent = "Click or drop the file here"; name.classList.add("empty"); updateRun(); return; }
+    if (!RULES[kind].re.test(file.name)) {
+      files[kind] = null; box.classList.add("err"); name.textContent = RULES[kind].msg; updateRun(); return;
+    }
+    files[kind] = file;
+    box.classList.add("has");
+    name.textContent = file.name + " (" + (file.size / 1024 / 1024 >= 1 ? (file.size / 1024 / 1024).toFixed(1) + " MB" : Math.ceil(file.size / 1024) + " KB") + ")";
+    updateRun();
+  }
+  for (const kind of ["bom", "pdf", "cbd"]) {
+    const input = $("f-" + kind), box = $("drop-" + kind);
+    input.addEventListener("change", () => setFile(kind, input.files[0] || null));
+    box.addEventListener("dragover", (e) => { e.preventDefault(); box.classList.add("over"); });
+    box.addEventListener("dragleave", () => box.classList.remove("over"));
+    box.addEventListener("drop", (e) => {
+      e.preventDefault(); box.classList.remove("over");
+      const f = e.dataTransfer.files[0];
+      if (f) setFile(kind, f);
+    });
+  }
+  // A file dropped anywhere else on the page goes to the box that fits its type.
+  document.addEventListener("dragover", (e) => e.preventDefault());
+  document.addEventListener("drop", (e) => {
+    if (e.target.closest && e.target.closest(".drop")) return;
+    e.preventDefault();
+    for (const f of e.dataTransfer.files) {
+      if (/\.pdf$/i.test(f.name)) setFile("pdf", f);
+      else if (/cbd/i.test(f.name) || /\.xls$/i.test(f.name)) setFile("cbd", f);
+      else if (/\.(xlsx|xlsm)$/i.test(f.name)) setFile("bom", f);
+    }
+  });
+
+  function updateRun() {
+    const n = Object.values(files).filter(Boolean).length;
+    const ready = pool[0] && !pool[0].dead;
+    $("run").disabled = busy || n < 3 || !ready;
+    $("run-note").textContent = busy ? "" : n < 3 ? "Add all three files to start." :
+      $("engine").classList.contains("ok") ? "Ready." : "Waiting for the engine to start.";
+  }
+
+  // ------------------------------------------------------------ progress
+  let t0 = 0, timer = null, stepText = "";
+  const clock = () => { const s = Math.round((Date.now() - t0) / 1000); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
+  function progress(text, frac) {
+    stepText = text;
+    $("progress").classList.remove("hidden");
+    const bar = $("bar");
+    if (frac == null) { bar.classList.add("indet"); bar.firstElementChild.style.width = ""; }
+    else { bar.classList.remove("indet"); bar.firstElementChild.style.width = Math.round(frac * 100) + "%"; }
+    $("step").textContent = text + "  (" + clock() + ")";
+  }
+
+  function showProblem(title, text, extra) {
+    const el = $("problem");
+    el.innerHTML = "";
+    const box = document.createElement("div");
+    box.className = "msg bad";
+    const p1 = document.createElement("p"); p1.innerHTML = "<strong></strong>"; p1.firstChild.textContent = title;
+    const p2 = document.createElement("p"); p2.style.whiteSpace = "pre-wrap"; p2.textContent = text;
+    box.append(p1, p2);
+    el.append(box);
+    if (extra) el.append(extra);
+    el.classList.remove("hidden");
+  }
+
+  // ------------------------------------------------------------ run
+  async function readPages(w0, pdfBuf, key) {
+    progress("Opening the PO document", null);
+    for (const w of pool) w.pdfKey = null;
+    await w0.call("file", { name: "pdf", data: pdfBuf.slice(0) });
+    w0.pdfKey = key;
+    const n = (await w0.call("open")).pages;
+    const queue = Array.from({ length: n }, (_, i) => i + 1);
+    const pages = {};
+    let done = 0;
+    progress("Reading PO pages: 0 of " + n, 0);
+
+    async function loop(w) {
+      try {
+        if (w.pdfKey !== key) {
+          await w.call("file", { name: "pdf", data: pdfBuf.slice(0) });
+          await w.call("open");
+          w.pdfKey = key;
+        }
+      } catch (_) { return; }
+      while (queue.length) {
+        const pno = queue.shift();
+        try {
+          const r = await w.call("page", { pno });
+          pages[pno] = JSON.parse(r.data);
+          done++;
+          progress("Reading PO pages: " + done + " of " + n, done / n);
+        } catch (err) {
+          queue.unshift(pno);
+          if (w === w0) throw err;
+          return;
+        }
+      }
+    }
+    let finish;
+    const allDone = new Promise((r) => (finish = r));
+    const tick = setInterval(() => { if (done >= n) finish(); }, 250);
+    const loops = [loop(w0)];
+    for (const w of pool.slice(1)) {
+      if (w.dead) continue;
+      loops.push(w.ready.then(() => (queue.length ? loop(w) : null), () => null));
+    }
+    try {
+      await Promise.race([Promise.all(loops), allDone]);   // do not wait for helpers that are still starting
+    } finally {
+      clearInterval(tick);
+    }
+    for (let p = 1; p <= n; p++) {            // anything a stopped helper left behind
+      if (!pages[p]) {
+        const r = await w0.call("page", { pno: p });
+        pages[p] = JSON.parse(r.data);
+      }
+    }
+    return pages;
+  }
+
+  async function run(force) {
+    if (busy) return;
+    busy = true; updateRun();
+    $("problem").classList.add("hidden");
+    $("result").classList.add("hidden");
+    t0 = Date.now();
+    timer = setInterval(() => { if (stepText) $("step").textContent = stepText + "  (" + clock() + ")"; }, 1000);
+    try {
+      const w0 = await pool[0].ready;
+      const pdf = files.pdf;
+      const key = [pdf.name, pdf.size, pdf.lastModified].join("|");
+      if (pageCache.key !== key) {
+        const pdfBuf = await pdf.arrayBuffer();
+        pageCache = { key, pages: await readPages(w0, pdfBuf, key) };
+      } else if (w0.pdfKey !== key) {
+        await w0.call("file", { name: "pdf", data: await pdf.arrayBuffer() });
+        w0.pdfKey = key;
+      }
+      progress("Reading the BOM and CBD", null);
+      await w0.call("file", { name: "bom", data: await files.bom.arrayBuffer() });
+      await w0.call("file", { name: "cbd", data: await files.cbd.arrayBuffer() });
+      progress("Matching PO lines and CBD costs to the BOM rows", null);
+      const out = await w0.call("run", { force: !!force, pages: JSON.stringify(pageCache.pages) });
+      const res = JSON.parse(out.res);
+      if (res.status === "ok") {
+        output = { bytes: out.bytes, name: files.bom.name.replace(/\.(xlsx|xlsm)$/i, "") + "_FILLED.xlsx", rows: res.rows };
+        render(res);
+      } else if (res.status === "stopped") {
+        const again = document.createElement("div");
+        again.className = "actions";
+        const b = document.createElement("button");
+        b.textContent = "Fill anyway";
+        b.addEventListener("click", () => run(true));
+        const s = document.createElement("span");
+        s.className = "note";
+        s.textContent = "Only if you are sure these files are for the same order.";
+        again.append(b, s);
+        showProblem("These files do not seem to belong to the same order.", res.message, again);
+      } else {
+        const d = document.createElement("details");
+        d.innerHTML = "<summary>Technical details</summary><pre></pre>";
+        d.querySelector("pre").textContent = (res.log || "") + "\n" + (res.trace || "");
+        showProblem("The tool could not finish.", res.message + "\nCheck that each file is in the right box. A new PO layout may need an update to the tool.", d);
+      }
+    } catch (err) {
+      showProblem("Something went wrong.", err.message + "\nReload the page and try again.");
+    } finally {
+      clearInterval(timer); stepText = "";
+      $("progress").classList.add("hidden");
+      busy = false; updateRun();
+    }
+  }
+  $("run").addEventListener("click", () => run(false));
+
+  // ------------------------------------------------------------ results
+  const COLOURS = { "#C6EFCE": "Filled from PO", "#FCE4D6": "From CBD", "#BDD7EE": "Replaced", "#FFC7CE": "To check", "#FFEB9C": "No PO" };
+  function render(res) {
+    const rows = res.rows;
+    const log = (res.log || "").split("\n").filter((l) => l && !/^WARNING \*\*\* file size/.test(l) && !/^Saved:/.test(l));
+    $("log").textContent = log.join("\n");
+
+    // tiles
+    const tiles = $("tiles"); tiles.innerHTML = "";
+    const tile = (num, label, cls) => {
+      const d = document.createElement("div"); d.className = "tile " + (cls || "");
+      const b = document.createElement("b"); b.textContent = num;
+      const s = document.createElement("span"); s.textContent = label;
+      d.append(b, s); tiles.append(d);
+    };
+    const poOk = /PO totals check: ALL OK/.test(res.log), cbdOk = /CBD check: ALL OK/.test(res.log);
+    tile(poOk ? "OK" : "FAIL", "PO totals self-check", poOk ? "ok" : "bad");
+    tile(cbdOk ? "OK" : "FAIL", "CBD self-check", cbdOk ? "ok" : "bad");
+    const count = {}; let added = 0;
+    for (const r of rows.slice(1)) {
+      for (let c = 0; c < 20; c++) { const k = (r[c][1] || "").toUpperCase(); if (COLOURS[k]) count[k] = (count[k] || 0) + 1; }
+      if ((r[20] && (r[20][1] || "").toUpperCase()) === "#E4DFEC") added++;
+    }
+    tile(rows.length - 1, "Rows in the filled sheet");
+    for (const k of Object.keys(COLOURS)) if (count[k]) tile(count[k], COLOURS[k] + (k === "#FFEB9C" ? " (rows)" : " cells"));
+    if (added) tile(added, "New rows (split or from PO)");
+
+    // warnings
+    const warns = $("warns"); warns.innerHTML = "";
+    const wl = log.filter((l) => /^\s+-\s/.test(l) || /^!!/.test(l)).map((l) => l.replace(/^\s+-\s/, ""));
+    if (!poOk || !cbdOk) wl.unshift("A self-check failed. Open the Checks sheet before using any value.");
+    if (wl.length) {
+      const m = document.createElement("div"); m.className = "msg warn";
+      const p = document.createElement("p"); p.innerHTML = "<strong>Warnings</strong>"; m.append(p);
+      for (const w of wl) { const q = document.createElement("p"); q.textContent = w; m.append(q); }
+      warns.append(m);
+    }
+
+    // grid
+    const t = $("grid"); t.innerHTML = "";
+    const letters = "ABCDEFGHIJKLMNOPQRSTUVWX";
+    const head = document.createElement("tr");
+    rows[0].forEach((c, i) => {
+      const th = document.createElement("th");
+      const sm = document.createElement("small"); sm.textContent = letters[i] || "";
+      th.append(sm, document.createTextNode(c[0]));
+      head.append(th);
+    });
+    const thead = document.createElement("thead"); thead.append(head); t.append(thead);
+    const tb = document.createElement("tbody");
+    for (const r of rows.slice(1)) {
+      const tr = document.createElement("tr");
+      r.forEach((c, i) => {
+        const td = document.createElement("td");
+        td.textContent = c[0];
+        if (c[0].length > 40) td.classList.add("long");
+        if (c[1] && c[1].toUpperCase() !== "#F2F2F2") { td.style.background = c[1]; td.classList.add("c"); }
+        if (i >= 20 && !td.classList.contains("c")) td.classList.add("helper");
+        if (c[2]) { td.title = c[2]; td.classList.add("note"); }
+        tr.append(td);
+      });
+      tb.append(tr);
+    }
+    t.append(tb);
+
+    $("dl-note").textContent = "Underlined cells have a note: hover to read it.";
+    $("result").classList.remove("hidden");
+    $("result").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+  }
+
+  $("dl").addEventListener("click", () => {
+    if (!output) return;
+    const blob = new Blob([output.bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = output.name;
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    $("dl-note").textContent = "Downloaded " + output.name + ". Check your Downloads folder.";
+  });
+
+  $("copy").addEventListener("click", async () => {
+    if (!output) return;
+    const esc = (v) => (/[\t\n"]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v);
+    const tsv = output.rows.slice(1).map((r) => r.slice(0, 20).map((c) => esc(c[0])).join("\t")).join("\n");
+    try {
+      await navigator.clipboard.writeText(tsv);
+      $("dl-note").textContent = "Copied " + (output.rows.length - 1) + " rows (columns A to T, no header). Some rows are split or added, so check column X (original BOM row) before you paste over your BOM.";
+    } catch (_) {
+      $("dl-note").textContent = "Copy was blocked by the browser. Select the table and copy it by hand.";
+    }
+  });
+
+})();
+</script>
+</body>
+</html>
